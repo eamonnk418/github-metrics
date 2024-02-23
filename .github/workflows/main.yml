@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "go.sum"
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: go test -v ./...
+
+      - name: Run linters
+        run: |
+          go get -u golang.org/x/lint/golint
+          golint ./...
+
+      - name: Run formatters
+        run: |
+          go get -u golang.org/x/tools/cmd/goimports
+          goimports -w .
+
+      - name: Run security scanning
+        run: |
+          go get -u github.com/securego/gosec/v2/cmd/gosec
+          gosec ./...
