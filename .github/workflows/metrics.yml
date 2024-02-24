@@ -35,7 +35,7 @@ jobs:
         run: go mod download
 
       - name: Build 
-        run: go build -o ./cmd/metrics/main.go
+        run: go build -o ./bin/github-metrics ./cmd/github-metrics/main.go 
 
       - name: Create GitHub App Token
         uses: actions/create-github-app-token@v1
@@ -46,4 +46,4 @@ jobs:
           github-api-url: "https://github.acme-inc.com/api/v3"
 
       - name: Generate metrics report
-        run: go run ./cmd/metrics/main.go get repo ${{ github.repository}}
+        run: ./bin/github-metrics get repo ${{ github.repository}}
