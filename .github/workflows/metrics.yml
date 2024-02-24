@@ -45,4 +45,6 @@ jobs:
           private-key: ${{ secrets.PRIVATE_KEY }}
 
       - name: Generate metrics report
-        run: ./bin/github-metrics get repo ${{ github.repository}}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: ./bin/github-metrics get repo --owner ${{ github.repository_owner }} --repo ${{ github.event.repository.name }}
