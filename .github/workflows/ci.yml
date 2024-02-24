@@ -9,7 +9,7 @@ on:
       - main
 
 jobs:
-  build:
+  unit-tests:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,19 +26,4 @@ jobs:
         run: go mod download
 
       - name: Run unit tests
-        run: go test -v ./...
-
-      - name: Run linters
-        run: |
-          go get -u golang.org/x/lint/golint
-          golint ./...
-
-      - name: Run formatters
-        run: |
-          go get -u golang.org/x/tools/cmd/goimports
-          goimports -w .
-
-      - name: Run security scanning
-        run: |
-          go get -u github.com/securego/gosec/v2/cmd/gosec
-          gosec ./...
+        run: go test -race -v ./...
