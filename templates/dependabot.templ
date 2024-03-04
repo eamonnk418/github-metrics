@@ -1,0 +1,8 @@
+version: {{ .Version }}
+updates: 
+{{- range .Updates }}
+- package-ecosystem: "{{ .PackageEcosystem }}"
+  directory: "{{ .Directory }}"
+  schedule:
+    interval: "{{ .Schedule.Interval }}"
+{{ end -}}

@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/eamonnk418/github-metrics/internal/cmd/get"
+	"github.com/eamonnk418/github-metrics/internal/cmd/dependabot"
 	"github.com/eamonnk418/github-metrics/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -9,13 +9,14 @@ import (
 func NewRootCmd(app *config.Application) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "github-metrics",
-		Short: "A CLI for interacting with GitHub",
+		Short: "GitHub Metrics is a tool to gather metrics from GitHub",
+		Long:  "GitHub Metrics is a tool to gather metrics from GitHub", // replace this with a heredoc or template
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return nil
 		},
 	}
 
-	rootCmd.AddCommand(get.NewCmdGet(app))
+	rootCmd.AddCommand(dependabot.NewDependabotCmd(app))
 
 	return rootCmd
 }
