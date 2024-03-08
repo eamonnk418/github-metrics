@@ -23,6 +23,15 @@ func New(token string) *Client {
 	return &Client{Client: client}
 }
 
+func (c Client) GetRepositoryByOrg(ctx context.Context, org, repo string) (*github.Repository, error) {
+	repository, _, err := c.Repositories.Get(ctx, org, repo)
+	if err != nil {
+		return nil, err
+	}
+
+	return repository, nil
+}
+
 func (c Client) ListRepositoriesByOrg(ctx context.Context, org string) ([]*github.Repository, error) {
 	var allRepos []*github.Repository
 
