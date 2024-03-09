@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
@@ -20,16 +21,20 @@ type DependabotStats struct {
 }
 
 type PRStats struct {
-	Merged      int
-	Closed      int
-	Open        int
-	AvgDuration time.Duration
+	Merged         int
+	Closed         int
+	Open           int
+	MergedDuration time.Duration
+	ClosedDuration time.Duration
+	OpenDuration   time.Duration
 }
 
 func NewDependabotCmd(app *config.Application) *cobra.Command {
 	opts := struct {
-		org  string
-		repo string
+		org   string
+		repo  string
+		actor string
+		state string
 	}{}
 
 	dependabotCmd := &cobra.Command{
@@ -42,94 +47,14 @@ func NewDependabotCmd(app *config.Application) *cobra.Command {
 				return err
 			}
 
-			var repoList []*github.Repository
-			var prList []*github.PullRequest
-
-			for _, r := range repos {
-				repo, err := getRepository(cmd.Context(), app.Config, opts.org, r.GetName())
-				if err != nil {
-					return err
-				}
-
-				repoList = append(repoList, repo)
+			dependabotStats, err := processRepositories(cmd.Context(), app.Config, repos, opts.actor, opts.state)
+			if err != nil {
+				return err
 			}
 
-			var prStats []*PRStats
-			for _, repo := range repoList {
-				prs, err := listPrsForRepo(cmd.Context(), app.Config, opts.org, repo.GetName(), "dependabot[bot]")
-				if err != nil {
-					return err
-				}
-				prList = append(prList, prs...)
+			header := []string{"Repository", "Merged", "Closed", "Open", "ClosedDuration", "MergedDuration", "OpenDuration"}
 
-				var durations []time.Duration
-				closedCount := 0
-				openCount := 0
-				mergedCount := 0
-
-				for _, pr := range prs {
-					if pr.GetUser().GetLogin() != "dependabot[bot]" {
-						continue
-					}
-
-					switch pr.GetState() {
-					case "closed":
-						closedCount++
-						if pr.GetMerged() {
-							// Calculate and store the duration for merged PRs
-							mergedAt := pr.GetMergedAt()
-							createdAt := pr.GetCreatedAt()
-
-							duration := mergedAt.Sub(createdAt.Time)
-							durations = append(durations, duration)
-						}
-					case "open":
-						openCount++
-						createdAt := pr.GetCreatedAt()
-
-						duration := time.Since(createdAt.Time)
-						durations = append(durations, duration)
-					}
-
-					if pr.GetMerged() {
-						mergedCount++
-						mergedAt := pr.GetMergedAt()
-						createdAt := pr.GetCreatedAt()
-
-						duration := mergedAt.Sub(createdAt.Time)
-						durations = append(durations, duration)
-					}
-				}
-
-				// Calculate the average duration for the repository
-				var totalDuration time.Duration
-				for _, duration := range durations {
-					totalDuration += duration
-				}
-
-				var avgDuration time.Duration
-				if len(durations) > 0 {
-					avgDuration = totalDuration / time.Duration(len(durations))
-				}
-
-				prStats = append(prStats, &PRStats{
-					Merged:      mergedCount,
-					Closed:      closedCount,
-					Open:        openCount,
-					AvgDuration: avgDuration,
-				})
-
-				fmt.Printf("Repository: %s, Merged: %d, Closed: %d, Opened: %d, Duration(Avg): %s\n", repo.GetFullName(), mergedCount, closedCount, openCount, avgDuration)
-			}
-
-			data := &DependabotStats{
-				Repository:  repoList,
-				PullRequest: prList,
-				PRStats:     prStats,
-			}
-
-			header := []string{"Repository", "Merged", "Closed", "Open", "AvgDuration"}
-			if err := writeToCSV(data, header); err != nil {
+			if err := writeToCSV(dependabotStats, header); err != nil {
 				return err
 			}
 
@@ -137,11 +62,87 @@ func NewDependabotCmd(app *config.Application) *cobra.Command {
 		},
 	}
 
-	dependabotCmd.Flags().StringVarP(&opts.org, "org", "o", "", "The organization to list repositories for")
+	dependabotCmd.Flags().StringVarP(&opts.org, "org", "o", "actions", "The organization to list repositories for")
 	dependabotCmd.Flags().StringVarP(&opts.repo, "repo", "r", "", "The repository to get metrics for")
-	dependabotCmd.MarkFlagsOneRequired("org", "repo")
+	dependabotCmd.Flags().StringVarP(&opts.actor, "actor", "a", "dependabot[bot]", "The actor to filter pull requests by")
+	dependabotCmd.Flags().StringVarP(&opts.state, "state", "s", "all", "The state to filter pull requests by")
+	dependabotCmd.MarkFlagsRequiredTogether("org", "repo", "actor", "state")
 
 	return dependabotCmd
+}
+
+func processRepositories(ctx context.Context, cfg *config.Config, repositories []*github.Repository, actor, state string) (*DependabotStats, error) {
+	var repoList []*github.Repository
+	var prList []*github.PullRequest
+	var prStats []*PRStats
+
+	for _, repo := range repositories {
+		prs, err := listPRsForRepoByActorAndState(ctx, cfg, repo, actor, state)
+		if err != nil {
+			return nil, err
+		}
+
+		prList = append(prList, prs...)
+		repoList = append(repoList, repo)
+
+		stats, err := calculatePRStats(prs)
+		if err != nil {
+			return nil, err
+		}
+
+		prStats = append(prStats, stats)
+	}
+
+	dependabotStats := &DependabotStats{
+		Repository:  repoList,
+		PullRequest: prList,
+		PRStats:     prStats,
+	}
+
+	return dependabotStats, nil
+}
+
+func calculatePRStats(prs []*github.PullRequest) (*PRStats, error) {
+	var countMerged, countClosed, countOpen int
+	var mergedDuration, closedDuration, openDuration time.Duration
+
+	for _, pr := range prs {
+		if pr.GetState() == "closed" {
+			if !pr.GetMergedAt().IsZero() {
+				mergedDuration += pr.GetMergedAt().Sub(pr.GetCreatedAt().Time)
+				countMerged++
+			}
+			closedDuration += pr.GetClosedAt().Sub(pr.GetCreatedAt().Time)
+			countClosed++
+		}
+
+		if pr.GetState() == "open" {
+			openDuration += time.Since(pr.GetCreatedAt().Time)
+			countOpen++
+		}
+	}
+
+	var avgMerged, avgClosed, avgOpen time.Duration
+	if countMerged > 0 {
+		avgMerged = mergedDuration / time.Duration(countMerged)
+	}
+	if countClosed > 0 {
+		avgClosed = closedDuration / time.Duration(countClosed)
+	}
+	if countOpen > 0 {
+		avgOpen = openDuration / time.Duration(countOpen)
+	}
+
+	stats := &PRStats{
+		Merged:         countMerged,
+		Closed:         countClosed,
+		Open:           countOpen,
+		MergedDuration: avgMerged,
+		ClosedDuration: avgClosed,
+		OpenDuration:   avgOpen,
+	}
+
+	return stats, nil
 }
 
 func getRepository(ctx context.Context, cfg *config.Config, org, repo string) (*github.Repository, error) {
@@ -185,35 +186,37 @@ func listRepositories(ctx context.Context, cfg *config.Config, org string) ([]*g
 	return allRepos, nil
 }
 
-func listPrsForRepo(ctx context.Context, cfg *config.Config, org, repo, actor string) ([]*github.PullRequest, error) {
-	gh := createNewGitHubClient(cfg.AccessToken)
+func listPRsForRepoByActorAndState(ctx context.Context, cfg *config.Config, repository *github.Repository, actor, state string) ([]*github.PullRequest, error) {
+	client := createNewGitHubClient(cfg.AccessToken)
 
-	opts := &github.PullRequestListOptions{
-		State: "all",
+	owner := repository.GetOwner().GetLogin()
+	repo := repository.GetName()
+
+	prs, resp, err := client.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{
+		State: state,
 		ListOptions: github.ListOptions{
-			Page:    1,
+			Page:    0,
 			PerPage: 100,
 		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		return prs, nil
 	}
 
-	var allPrs []*github.PullRequest
-
-	for {
-		prs, resp, err := gh.PullRequests.List(ctx, org, repo, opts)
-		if err != nil {
-			return nil, err
-		}
-
-		allPrs = append(allPrs, prs...)
-
-		if resp.NextPage == 0 {
-			break
-		}
-
-		opts.Page = resp.NextPage
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, nil
 	}
 
-	return allPrs, nil
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		return nil, fmt.Errorf("unprocessable entity")
+	}
+
+	return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 }
 
 func writeToCSV(data *DependabotStats, header []string) error {
@@ -241,7 +244,9 @@ func writeToCSV(data *DependabotStats, header []string) error {
 			fmt.Sprintf("%d", prStat.Merged),
 			fmt.Sprintf("%d", prStat.Closed),
 			fmt.Sprintf("%d", prStat.Open),
-			fmt.Sprintf("%s", prStat.AvgDuration),
+			fmt.Sprintf("%s", prStat.ClosedDuration),
+			fmt.Sprintf("%s", prStat.MergedDuration),
+			fmt.Sprintf("%s", prStat.OpenDuration),
 		}); err != nil {
 			return err
 		}
@@ -253,13 +258,6 @@ func writeToCSV(data *DependabotStats, header []string) error {
 func createNewGitHubClient(token string) *client.Client {
 	return client.New(token)
 }
-
-
-
-
-
-
-
 
 // // ... (import statements)
 

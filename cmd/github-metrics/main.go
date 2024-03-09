@@ -1,30 +1,25 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
+	"os"
 
-	"github.com/eamonnk418/github-metrics/internal/util"
+	"github.com/eamonnk418/github-metrics/internal/cmd"
+	"github.com/eamonnk418/github-metrics/internal/config"
 )
 
 func main() {
-	// cfg, err := config.LoadConfig()
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-
-	// app := &config.Application{
-	// 	Config: cfg,
-	// 	Logger: logger,
-	// }
-
-	// cmd.Execute(app)
-
-	org, repo, err := util.ParseURL("https://github.com/eamonnk418/github-metrics")
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Org: %s, Repo: %s\n", org, repo)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	app := &config.Application{
+		Config: cfg,
+		Logger: logger,
+	}
+
+	cmd.Execute(app)
 }
